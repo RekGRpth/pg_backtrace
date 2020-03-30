@@ -1,6 +1,6 @@
-//#include <execinfo.h>
+#include <execinfo.h>
 #include <unistd.h>
-#include <libunwind.h> /* from -llibuwind */
+//#include <libunwind.h> /* from -llibuwind */
 #include <postgres.h>
 
 #include <access/xact.h>
@@ -71,15 +71,16 @@ static pqsigfunc handlers[_NSIG];
 
 static void handler(SIGNAL_ARGS) {
 //    int ret;
-//    size_t size;
-//    void *buffer[100];
-    unw_cursor_t cursor;
-    unw_context_t context;
+    size_t size;
+    void *buffer[128];
+//    unw_cursor_t cursor;
+//    unw_context_t context;
     L("postgres_signal_arg = %d (%s)", postgres_signal_arg, pg_strsignal(WTERMSIG(postgres_signal_arg)));
     pqsignal_no_restart(SIGILL, SIG_DFL);
-//    size = backtrace(buffer, 100);
-//    backtrace_symbols_fd(buffer, size, STDERR_FILENO);
-    if (unw_getcontext(&context)) E("unw_getcontext");
+    size = backtrace(buffer, 128);
+    backtrace_symbols_fd(buffer, size, fileno(stderr));
+    fsync(fileno(stderr));
+/*    if (unw_getcontext(&context)) E("unw_getcontext");
     if (unw_init_local(&cursor, &context)) E("unw_init_local");
 //    if (unw_init_local2(&cursor, &context, UNW_INIT_SIGNAL_FRAME)) E("unw_init_local2");
     for (int i = 0; unw_step(&cursor) > 0; i++) {
@@ -91,7 +92,7 @@ static void handler(SIGNAL_ARGS) {
         if (!strcmp(fname, "__restore_rt")) continue;
         if (!strcmp(fname, "__libc_start_main")) break;
         L("\t#%02d: 0x"REGFORMAT" in %s(), sp = 0x"REGFORMAT, i, (long)ip, fname[0] ? fname : "??", (long)sp);
-    }
+    }*/
 //    pqsignal_no_restart(postgres_signal_arg, handlers[postgres_signal_arg]);
 //    kill(MyProcPid, postgres_signal_arg);
 }
