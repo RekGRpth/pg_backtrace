@@ -79,7 +79,7 @@ static void handler(SIGNAL_ARGS) {
     pqsignal_no_restart(SIGILL, SIG_DFL);
 //    size = backtrace(buffer, 100);
 //    backtrace_symbols_fd(buffer, size, STDERR_FILENO);
-    if (unw_getcontext(&context) != UNW_ESUCCESS) E("unw_getcontext != UNW_ESUCCESS");
+    if (unw_getcontext(&context)) E("unw_getcontext");
     if (unw_init_local(&cursor, &context)) E("unw_init_local");
 //    if (unw_init_local2(&cursor, &context, UNW_INIT_SIGNAL_FRAME)) E("unw_init_local2");
     for (int i = 0; unw_step(&cursor) > 0; i++) {
