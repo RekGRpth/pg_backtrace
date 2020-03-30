@@ -36,7 +36,7 @@ static void handler(SIGNAL_ARGS) {
 
 void _PG_init(void); void _PG_init(void) {
     if (!process_shared_preload_libraries_in_progress) return;
-//    handlers[SIGABRT] = pqsignal_no_restart(SIGABRT, handler);
+    handlers[SIGABRT] = pqsignal_no_restart(SIGABRT, handler);
 #ifdef SIGBUS
     handlers[SIGBUS] = pqsignal_no_restart(SIGBUS, handler);
 #endif
@@ -47,7 +47,7 @@ void _PG_init(void); void _PG_init(void) {
 }
 
 void _PG_fini(void); void _PG_fini(void) {
-//    pqsignal_no_restart(SIGABRT, handlers[SIGABRT]);
+    pqsignal_no_restart(SIGABRT, handlers[SIGABRT]);
 #ifdef SIGBUS
     pqsignal_no_restart(SIGBUS,  handlers[SIGBUS]);
 #endif
