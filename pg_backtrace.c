@@ -24,10 +24,6 @@
      _70, format, ...) FORMAT_ ## format(fmt)
 
 #define E(fmt, ...) ereport(ERROR, (errbacktrace(), errmsg(GET_FORMAT(fmt, ##__VA_ARGS__), ##__VA_ARGS__)))
-//#define E(fmt, ...) ereport(ERROR, (errmsg(GET_FORMAT(fmt, ##__VA_ARGS__), ##__VA_ARGS__)))
-#define F(fmt, ...) ereport(FATAL, (errmsg(GET_FORMAT(fmt, ##__VA_ARGS__), ##__VA_ARGS__)))
-#define L(fmt, ...) ereport(LOG, (errmsg(GET_FORMAT(fmt, ##__VA_ARGS__), ##__VA_ARGS__)))
-#define W(fmt, ...) ereport(WARNING, (errbacktrace(), errmsg(GET_FORMAT(fmt, ##__VA_ARGS__), ##__VA_ARGS__)))
 
 PG_MODULE_MAGIC;
 
@@ -35,7 +31,7 @@ static pqsigfunc handlers[_NSIG];
 
 static void handler(SIGNAL_ARGS) {
     pqsignal_no_restart(postgres_signal_arg, SIG_DFL);
-    E("postgres_signal_arg = %d (%s)", postgres_signal_arg, pg_strsignal(WTERMSIG(postgres_signal_arg)));
+    E("%s(%i)", pg_strsignal(WTERMSIG(postgres_signal_arg)), postgres_signal_arg);
 }
 
 void _PG_init(void); void _PG_init(void) {
