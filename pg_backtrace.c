@@ -74,13 +74,13 @@ static void handler(SIGNAL_ARGS) {
 //    size_t size;
 //    void *buffer[100];
     unw_cursor_t cursor;
-    unw_context_t uc;
+    unw_context_t context;
     L("postgres_signal_arg = %d (%s)", postgres_signal_arg, pg_strsignal(WTERMSIG(postgres_signal_arg)));
     pqsignal_no_restart(SIGILL, SIG_DFL);
 //    size = backtrace(buffer, 100);
 //    backtrace_symbols_fd(buffer, size, STDERR_FILENO);
-    if (unw_getcontext(&uc) != UNW_ESUCCESS) E("unw_getcontext != UNW_ESUCCESS");
-    if (unw_init_local(&cursor, &uc)) E("unw_init_local");
+    if (unw_getcontext(&context) != UNW_ESUCCESS) E("unw_getcontext != UNW_ESUCCESS");
+    if (unw_init_local(&cursor, &context)) E("unw_init_local");
     for (int nptrs = 0; unw_step(&cursor) > 0; nptrs++) {
         char fname[128] = { '\0', };
         unw_word_t ip, sp, offp;
