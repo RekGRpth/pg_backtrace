@@ -81,7 +81,8 @@ static void handler(SIGNAL_ARGS) {
 //    backtrace_symbols_fd(buffer, size, STDERR_FILENO);
     if (unw_getcontext(&context) != UNW_ESUCCESS) E("unw_getcontext != UNW_ESUCCESS");
     if (unw_init_local(&cursor, &context)) E("unw_init_local");
-    for (int nptrs = 0; unw_step(&cursor) > 0; nptrs++) {
+//    if (unw_init_local2(&cursor, &context, UNW_INIT_SIGNAL_FRAME)) E("unw_init_local2");
+    for (int i = 0; unw_step(&cursor) > 0; i++) {
         char fname[128] = { '\0', };
         unw_word_t ip, sp, offp;
         unw_get_proc_name(&cursor, fname, sizeof(fname), &offp);
@@ -89,7 +90,7 @@ static void handler(SIGNAL_ARGS) {
         if (unw_get_reg(&cursor, UNW_REG_SP, &sp)) E("unw_get_reg");
         if (!strcmp(fname, "__restore_rt")) continue;
         if (!strcmp(fname, "__libc_start_main")) break;
-        L("\t#%02d: 0x"REGFORMAT" in %s(), sp = 0x"REGFORMAT, nptrs, (long) ip, fname[0] ? fname : "??", (long)sp);
+        L("\t#%02d: 0x"REGFORMAT" in %s(), sp = 0x"REGFORMAT, i, (long)ip, fname[0] ? fname : "??", (long)sp);
     }
 //    pqsignal_no_restart(postgres_signal_arg, handlers[postgres_signal_arg]);
 //    kill(MyProcPid, postgres_signal_arg);
