@@ -1,186 +1,94 @@
 #include <execinfo.h>
 #include <unistd.h>
-#include <signal.h>
+#include <libunwind.h> /* from -llibuwind */
+#include <postgres.h>
 
-#include "postgres.h"
-#include "miscadmin.h"
-#include "parser/analyze.h"
-#include "utils/guc.h"
-#include "tcop/utility.h"
-#include "executor/executor.h"
+#include <access/xact.h>
+#include <catalog/pg_type.h>
+#include <commands/async.h>
+#include <commands/dbcommands.h>
+#include <commands/defrem.h>
+#include <executor/spi.h>
+#include <fmgr.h>
+#include <libpq/libpq-be.h>
+#include <miscadmin.h>
+#include <nodes/makefuncs.h>
+#include <pgstat.h>
+#include <postmaster/bgworker.h>
+#include <storage/ipc.h>
+#include <storage/pmsignal.h>
+#include <storage/procarray.h>
+#include <tcop/tcopprot.h>
+#include <utils/builtins.h>
+#include <utils/guc.h>
+#include <utils/lsyscache.h>
+#include <utils/memutils.h>
+#include <utils/ps_status.h>
+#include <utils/snapmgr.h>
+#include <utils/syscache.h>
+#include <utils/timeout.h>
+#include <utils/varlena.h>
 
-#ifdef PG_MODULE_MAGIC
-PG_MODULE_MAGIC;
+#if defined(REG_RIP)
+# define SIGSEGV_STACK_IA64
+# define REGFORMAT "%016lx"
+#elif defined(REG_EIP)
+# define SIGSEGV_STACK_X86
+# define REGFORMAT "%08x"
+#else
+# define SIGSEGV_STACK_GENERIC
+# define REGFORMAT "%x"
 #endif
 
-#define MAX_BACK_TRACE_DEPTH    100
-#define SKIP_FRAMES             3
+PG_MODULE_MAGIC;
 
-/* pg module functions */
-void _PG_init(void);
-void _PG_fini(void);
+static pqsigfunc handlers[_NSIG];
 
-PG_FUNCTION_INFO_V1(pg_backtrace_init);
-PG_FUNCTION_INFO_V1(pg_backtrace_sigsegv);
-
-static int backtrace_level = ERROR;
-static ErrorContextCallback backtrace_callback;
-static ExecutorRun_hook_type prev_executor_run_hook;
-static ProcessUtility_hook_type prev_utility_hook;
-static post_parse_analyze_hook_type prev_post_parse_analyze_hook;
-static bool inside_signal_handler;
-static pqsigfunc signal_handlers[_NSIG];
-
-static void
-backtrace_dump_stack(void)
-{
-    void* back_trace[MAX_BACK_TRACE_DEPTH];
-    int depth = backtrace(back_trace, MAX_BACK_TRACE_DEPTH);
-    char** stack = backtrace_symbols(back_trace+SKIP_FRAMES, depth-SKIP_FRAMES);
-	if (stack != NULL)
-	{
-		int i;
-		for (i = 0; i < depth-SKIP_FRAMES; i++) {
-			errcontext_msg("\t%s", stack[i]);
-		}
-		free(stack);
-	}
+static void handler(SIGNAL_ARGS) {
+    int ret;
+    size_t size;
+    void *buffer[100];
+    unw_cursor_t cursor;
+    unw_context_t uc;
+    elog(LOG, "postgres_signal_arg = %d (%s)", postgres_signal_arg, pg_strsignal(WTERMSIG(postgres_signal_arg)));
+    pqsignal_no_restart(SIGILL, SIG_DFL);
+    size = backtrace(buffer, 100);
+    backtrace_symbols_fd(buffer, size, STDERR_FILENO);
+    if ((ret = unw_getcontext(&uc)) != UNW_ESUCCESS) ereport(ERROR, (errmsg("%s(%s:%d): unw_getcontext != UNW_ESUCCESS", __func__, __FILE__, __LINE__)));
+    if ((ret = unw_init_local(&cursor, &uc)) != 0) ereport(ERROR, (errmsg("%s(%s:%d): unw_init_local != 0", __func__, __FILE__, __LINE__)));
+    for (int nptrs = 0; unw_step(&cursor) > 0; nptrs++) {
+        char fname[128] = { '\0', };
+        unw_word_t ip, sp, offp;
+        unw_get_proc_name(&cursor, fname, sizeof(fname), &offp);
+        if ((ret = unw_get_reg(&cursor, UNW_REG_IP, &ip)) != 0) ereport(ERROR, (errmsg("%s(%s:%d): unw_get_reg != 0", __func__, __FILE__, __LINE__)));
+        if ((ret = unw_get_reg(&cursor, UNW_REG_SP, &sp)) != 0) ereport(ERROR, (errmsg("%s(%s:%d): unw_get_reg != 0", __func__, __FILE__, __LINE__)));
+        if (!strcmp(fname, "__restore_rt")) continue;
+        if (!strcmp(fname, "__libc_start_main")) break;
+        elog(LOG, "\t#%02d: 0x"REGFORMAT" in %s(), sp = 0x"REGFORMAT, nptrs, (long) ip, fname[0] ? fname : "??", (long)sp);
+    }
+//    pqsignal_no_restart(postgres_signal_arg, handlers[postgres_signal_arg]);
+//    kill(MyProcPid, postgres_signal_arg);
 }
 
-static void
-backtrace_callback_function(void* arg)
-{
-	if (inside_signal_handler || geterrcode() >= backtrace_level)
-	{
-		backtrace_dump_stack();
-	}
+void _PG_init(void); void _PG_init(void) {
+    if (!process_shared_preload_libraries_in_progress) return;
+    handlers[SIGABRT] = pqsignal_no_restart(SIGABRT, handler);
+#ifdef SIGBUS
+    handlers[SIGBUS] = pqsignal_no_restart(SIGBUS, handler);
+#endif
+    handlers[SIGFPE] = pqsignal_no_restart(SIGFPE, handler);
+    handlers[SIGILL] = pqsignal_no_restart(SIGILL, handler);
+    handlers[SIGIOT] = pqsignal_no_restart(SIGIOT, handler);
+    handlers[SIGSEGV] = pqsignal_no_restart(SIGSEGV, handler);
 }
 
-static void backtrace_register_error_callback(void)
-{
-	ErrorContextCallback* esp;
-	for (esp = error_context_stack; esp != NULL && esp != &backtrace_callback; esp = esp->previous);
-	if (esp == NULL)
-	{
-		backtrace_callback.callback = backtrace_callback_function;
-		backtrace_callback.previous = error_context_stack;
-		error_context_stack = &backtrace_callback;
-	}
-}
-
-static void
-backtrace_executor_run_hook(QueryDesc *queryDesc,
-							ScanDirection direction,
-							uint64 count,
-							bool execute_once)
-{
-	backtrace_register_error_callback();
-	if (prev_executor_run_hook)
-		(*prev_executor_run_hook)(queryDesc, direction, count, execute_once);
-	else
-		standard_ExecutorRun(queryDesc, direction, count, execute_once);
-}
-
-static void backtrace_utility_hook(PlannedStmt *pstmt,
-								   const char *queryString, ProcessUtilityContext context,
-								   ParamListInfo params,
-								   QueryEnvironment *queryEnv,
-								   DestReceiver *dest, char *completionTag)
-{
-	backtrace_register_error_callback();
-	if (prev_utility_hook)
-		(*prev_utility_hook)(pstmt, queryString,
-							 context, params, queryEnv,
-							 dest, completionTag);
-	else
-		standard_ProcessUtility(pstmt, queryString,
-								context, params, queryEnv,
-								dest, completionTag);
-}
-
-static void backtrace_post_parse_analyze_hook(ParseState *pstate, Query *query)
-{
-	backtrace_register_error_callback();
-	if (prev_post_parse_analyze_hook)
-		prev_post_parse_analyze_hook(pstate, query);
-}
-
-
-static void
-backtrace_handler(SIGNAL_ARGS)
-{
-	inside_signal_handler = true;
-	elog(LOG, "Caught signal %d", postgres_signal_arg);
-	inside_signal_handler = false;
-	if (postgres_signal_arg != SIGINT && signal_handlers[postgres_signal_arg])
-		signal_handlers[postgres_signal_arg](postgres_signal_arg);
-}
-
-static const struct config_enum_entry backtrace_level_options[] =
-{
-	{"debug5", DEBUG5, false},
-	{"debug4", DEBUG4, false},
-	{"debug3", DEBUG3, false},
-	{"debug2", DEBUG2, false},
-	{"debug1", DEBUG1, false},
-	{"debug", DEBUG2, true},
-	{"log", LOG, false},
-	{"info", INFO, true},
-	{"notice", NOTICE, false},
-	{"warning", WARNING, false},
-	{"error", ERROR, false},
-	{"fatal", FATAL, true},
-	{"panic", PANIC, true},
-	{NULL, 0, false}
-};
-
-void _PG_init(void)
-{
-	signal_handlers[SIGSEGV] = pqsignal(SIGSEGV, backtrace_handler);
-	signal_handlers[SIGBUS] = pqsignal(SIGBUS, backtrace_handler);
-	signal_handlers[SIGFPE] = pqsignal(SIGFPE, backtrace_handler);
-	signal_handlers[SIGINT] = pqsignal(SIGINT, backtrace_handler);
-	prev_executor_run_hook = ExecutorRun_hook;
-	ExecutorRun_hook = backtrace_executor_run_hook;
-
-	prev_utility_hook = ProcessUtility_hook;
-	ProcessUtility_hook = backtrace_utility_hook;
-
-	prev_post_parse_analyze_hook = post_parse_analyze_hook;
-	post_parse_analyze_hook = backtrace_post_parse_analyze_hook;
-
-    DefineCustomEnumVariable("pg_backtrace.level",
-							 "Set error level for dumping backtrace",
-							 NULL,
-							 &backtrace_level,
-							 ERROR,
-							 backtrace_level_options,
-							 PGC_USERSET, 0, NULL, NULL, NULL);
-}
-
-void _PG_fini(void)
-{
-	ExecutorRun_hook = prev_executor_run_hook;
-	ProcessUtility_hook = prev_utility_hook;
-	post_parse_analyze_hook = prev_post_parse_analyze_hook;
-
-	pqsignal(SIGSEGV, signal_handlers[SIGSEGV]);
-	pqsignal(SIGBUS,  signal_handlers[SIGBUS]);
-	pqsignal(SIGFPE,  signal_handlers[SIGFPE]);
-	pqsignal(SIGINT,  signal_handlers[SIGINT]);
-}
-
-Datum pg_backtrace_init(PG_FUNCTION_ARGS);
-Datum pg_backtrace_sigsegv(PG_FUNCTION_ARGS);
-
-
-Datum pg_backtrace_init(PG_FUNCTION_ARGS)
-{
-	PG_RETURN_VOID();
-}
-
-Datum pg_backtrace_sigsegv(PG_FUNCTION_ARGS)
-{
-	*(int*)0 = 0;
-	PG_RETURN_VOID();
+void _PG_fini(void); void _PG_fini(void) {
+    pqsignal_no_restart(SIGABRT, handlers[SIGABRT]);
+#ifdef SIGBUS
+    pqsignal_no_restart(SIGBUS,  handlers[SIGBUS]);
+#endif
+    pqsignal_no_restart(SIGFPE,  handlers[SIGFPE]);
+    pqsignal_no_restart(SIGILL,  handlers[SIGILL]);
+    pqsignal_no_restart(SIGIOT,  handlers[SIGIOT]);
+    pqsignal_no_restart(SIGSEGV, handlers[SIGSEGV]);
 }
