@@ -8,10 +8,10 @@ PG_CONFIG = pg_config
 #PG_CPPFLAGS = -I$(libpq_srcdir)
 #SHLIB_LINK = $(libpq)
 #CFLAGS += -rdynamic -fno-omit-frame-pointer -lunwind -lunwind-$(uname -m)
-CFLAGS += -rdynamic -fno-omit-frame-pointer
+#CFLAGS += -rdynamic -fno-omit-frame-pointer
 #LIBS += -rdynamic -fno-omit-frame-pointer -lunwind -lunwind-$(shell uname -m)
 #SHLIB_LINK = -lunwind -lunwind-$(shell uname -m)
-SHLIB_LINK = -lexecinfo
+#SHLIB_LINK = -lexecinfo
 
 #EXTENSION = pg_backtrace
 #DATA = pg_backtrace--1.0.sql
