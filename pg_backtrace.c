@@ -2,7 +2,8 @@
 
 #include <fmgr.h>
 #include <miscadmin.h>
-#include <execinfo.h>
+#include <libunwind.h>
+#include <dlfcn.h>
 
 #define FORMAT_0(fmt, ...) "%s(%s:%d): %s", __func__, __FILE__, __LINE__, fmt
 #define FORMAT_1(fmt, ...) "%s(%s:%d): " fmt,  __func__, __FILE__, __LINE__
@@ -31,11 +32,19 @@ PG_MODULE_MAGIC;
 static pqsigfunc handlers[_NSIG];
 
 static void handler(SIGNAL_ARGS) {
-    void *buf[100];
-    int nframes;
-    pqsignal_no_restart(postgres_signal_arg, SIG_DFL);
-    nframes = backtrace(buf, sizeof(buf));
-    backtrace_symbols_fd(buf, nframes, fileno(stderr));
+    unw_cursor_t cursor;
+    unw_context_t context;
+    if (unw_getcontext(&context) != UNW_ESUCCESS) E("unw_getcontext != UNW_ESUCCESS");
+    if (unw_init_local(&cursor, &context)) E("unw_init_local");
+    for (int nptrs = 0; unw_step(&cursor) > 0; nptrs++) {
+        char name[128] = { '\0', };
+        unw_word_t ip, off;
+        Dl_info info;
+        if (unw_get_proc_name(&cursor, name, sizeof(name), &off)) E("unw_get_proc_name");
+        if (unw_get_reg(&cursor, UNW_REG_IP, &ip)) E("unw_get_reg");
+        if (!dladdr((void *)ip, &info)) E("dladdr");
+        pg_printf("#%02d: 0x%lx <%s+%li> at %s\n", nptrs, (long)ip, name[0] ? name : "???", (long)off, info.dli_fname);
+    }
     E("%s(%i)", pg_strsignal(WTERMSIG(postgres_signal_arg)), postgres_signal_arg);
 }
 
