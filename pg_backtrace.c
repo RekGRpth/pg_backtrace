@@ -2,6 +2,7 @@
 
 #include <fmgr.h>
 #include <miscadmin.h>
+#include <execinfo.h>
 
 #define FORMAT_0(fmt, ...) "%s(%s:%d): %s", __func__, __FILE__, __LINE__, fmt
 #define FORMAT_1(fmt, ...) "%s(%s:%d): " fmt,  __func__, __FILE__, __LINE__
@@ -23,14 +24,18 @@
      _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, \
      _70, format, ...) FORMAT_ ## format(fmt)
 
-#define E(fmt, ...) ereport(ERROR, (errbacktrace(), errmsg(GET_FORMAT(fmt, ##__VA_ARGS__), ##__VA_ARGS__)))
+#define E(fmt, ...) ereport(ERROR, (errmsg(GET_FORMAT(fmt, ##__VA_ARGS__), ##__VA_ARGS__)))
 
 PG_MODULE_MAGIC;
 
 static pqsigfunc handlers[_NSIG];
 
 static void handler(SIGNAL_ARGS) {
+    void *buf[100];
+    int nframes;
     pqsignal_no_restart(postgres_signal_arg, SIG_DFL);
+    nframes = backtrace(buf, sizeof(buf));
+    backtrace_symbols_fd(buf, nframes, fileno(stderr));
     E("%s(%i)", pg_strsignal(WTERMSIG(postgres_signal_arg)), postgres_signal_arg);
 }
 
