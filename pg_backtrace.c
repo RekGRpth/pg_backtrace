@@ -50,23 +50,23 @@ static void handler(SIGNAL_ARGS) {
 
 void _PG_init(void); void _PG_init(void) {
     if (!process_shared_preload_libraries_in_progress) return;
-    handlers[SIGABRT] = pqsignal_no_restart(SIGABRT, handler);
+    handlers[SIGABRT] = pqsignal(SIGABRT, handler);
 #ifdef SIGBUS
-    handlers[SIGBUS] = pqsignal_no_restart(SIGBUS, handler);
+    handlers[SIGBUS] = pqsignal(SIGBUS, handler);
 #endif
-    handlers[SIGFPE] = pqsignal_no_restart(SIGFPE, handler);
-    handlers[SIGILL] = pqsignal_no_restart(SIGILL, handler);
-    handlers[SIGIOT] = pqsignal_no_restart(SIGIOT, handler);
-    handlers[SIGSEGV] = pqsignal_no_restart(SIGSEGV, handler);
+    handlers[SIGFPE] = pqsignal(SIGFPE, handler);
+    handlers[SIGILL] = pqsignal(SIGILL, handler);
+    handlers[SIGIOT] = pqsignal(SIGIOT, handler);
+    handlers[SIGSEGV] = pqsignal(SIGSEGV, handler);
 }
 
 void _PG_fini(void); void _PG_fini(void) {
-    pqsignal_no_restart(SIGABRT, handlers[SIGABRT]);
+    pqsignal(SIGABRT, handlers[SIGABRT]);
 #ifdef SIGBUS
-    pqsignal_no_restart(SIGBUS,  handlers[SIGBUS]);
+    pqsignal(SIGBUS,  handlers[SIGBUS]);
 #endif
-    pqsignal_no_restart(SIGFPE,  handlers[SIGFPE]);
-    pqsignal_no_restart(SIGILL,  handlers[SIGILL]);
-    pqsignal_no_restart(SIGIOT,  handlers[SIGIOT]);
-    pqsignal_no_restart(SIGSEGV, handlers[SIGSEGV]);
+    pqsignal(SIGFPE,  handlers[SIGFPE]);
+    pqsignal(SIGILL,  handlers[SIGILL]);
+    pqsignal(SIGIOT,  handlers[SIGIOT]);
+    pqsignal(SIGSEGV, handlers[SIGSEGV]);
 }
